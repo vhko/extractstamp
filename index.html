@@ -7,17 +7,21 @@
     <script src="https://docs.opencv.org/4.x/opencv.js" type="text/javascript"></script>
     <script src="extractStamp.js"></script>
     <style>
-        #imageContainer {
+        #imageContainer, #originalImageContainer {
             display: flex;
             flex-wrap: wrap;
-            gap: 10px;
+            gap: 15px;
             margin-top: 20px;
         }
-        #imageContainer img {
-            max-width: 200px;
-            max-height: 200px;
+        #imageContainer img, #originalImageContainer img {
+            max-width: 300px;
+            max-height: 300px;
             object-fit: contain;
             border: 1px solid #ddd;
+            transition: transform 0.3s ease;
+        }
+        #imageContainer img:hover, #originalImageContainer img:hover {
+            transform: scale(1.1);
         }
         #loading {
             display: none;
@@ -36,6 +40,9 @@
 <body>
     <h1>选择图片</h1>
     <input type="file" id="imageInput" accept="image/*" onchange="selectImage()">
+    <h2>原图：</h2>
+    <div id="originalImageContainer"></div>
+    <h2>提取的印章：</h2>
     <div id="imageContainer"></div>
     <div id="loading">处理中，请稍候...</div>
     <script>
@@ -50,7 +57,8 @@
             console.log('file', file);
             if (file && isReady) {
                 showLoading();
-                extractStampWithFile(file, '#ff0000', '#ff0000', true).then(dstImgList => {
+                displayOriginalImage(file);
+                extractStampWithFile(file, '#ff0000', true).then(dstImgList => {
                     console.log('提取红色印章成功', dstImgList);
                     displayImages(dstImgList);
                     hideLoading();
@@ -65,6 +73,21 @@
             }
         }
 
+        function displayOriginalImage(file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const container = document.getElementById('originalImageContainer');
+                container.innerHTML = ''; // 清空之前的内容
+                const img = document.createElement('img');
+                img.src = e.target.result;
+                img.alt = '原图';
+                img.style.width = '300px';
+                img.style.height = '300px';
+                container.appendChild(img);
+            }
+            reader.readAsDataURL(file);
+        }
+
         function displayImages(imageList) {
             const container = document.getElementById('imageContainer');
             container.innerHTML = ''; // 清空之前的内容
@@ -72,6 +95,8 @@
                 const img = document.createElement('img');
                 img.src = imgSrc;
                 img.alt = `提取的印章 ${index + 1}`;
+                img.style.width = '100px';
+                img.style.height = '100px';
                 container.appendChild(img);
             });
         }

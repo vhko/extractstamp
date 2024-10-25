@@ -36,7 +36,6 @@ function initOpenCV(callback) {
  */
 function extractStampWithColorImpl(
   img,
-  extractColor = "#ff0000",
   setColor = "#ff0000"
 ) {
   if (cvReady) {
@@ -52,65 +51,23 @@ function extractStampWithColorImpl(
     cv.cvtColor(src, dst, cv.COLOR_RGBA2RGB);
     cv.cvtColor(dst, dst, cv.COLOR_RGB2HSV);
 
-    // 将提取颜色转换为HSV
-    const extractColorRGB = hexToRgba(extractColor);
-    const extractColorHSV = cv.matFromArray(1, 1, cv.CV_8UC3, [
-      extractColorRGB[0],
-      extractColorRGB[1],
-      extractColorRGB[2],
-    ]);
-    cv.cvtColor(extractColorHSV, extractColorHSV, cv.COLOR_RGB2HSV);
-    const hsvValues = extractColorHSV.data32F;
-
-    // 定义提取颜色的HSV范围
-    let lowColor, highColor;
-    if (extractColor.toLowerCase() === "#ff0000") {
-      // 红色的HSV范围
-      lowColor = new cv.Mat(dst.rows, dst.cols, dst.type(), [0, 100, 100, 0]);
-      highColor = new cv.Mat(
-        dst.rows,
-        dst.cols,
-        dst.type(),
-        [10, 255, 255, 255]
-      );
-    } else if (extractColor.toLowerCase() === "#00ff00") {
-      // 绿色的HSV范围
-      lowColor = new cv.Mat(dst.rows, dst.cols, dst.type(), [60, 100, 100, 0]);
-      highColor = new cv.Mat(
-        dst.rows,
-        dst.cols,
-        dst.type(),
-        [80, 255, 255, 255]
-      );
-    } else if (extractColor.toLowerCase() === "#000000") {
-      // 黑色的HSV范围
-      lowColor = new cv.Mat(dst.rows, dst.cols, dst.type(), [0, 0, 0, 0]);
-      highColor = new cv.Mat(
-        dst.rows,
-        dst.cols,
-        dst.type(),
-        [180, 255, 30, 255]
-      );
-    } else {
-      // 其他颜色（包括随机颜色如#00ffff）使用动态计算的范围
-      const hue = hsvValues[0];
-      const hueRange = 10; // 色相范围，可以根据需要调整
-      lowColor = new cv.Mat(dst.rows, dst.cols, dst.type(), [
-        Math.max(0, hue - hueRange),
-        100,
-        100,
-        0,
-      ]);
-      highColor = new cv.Mat(dst.rows, dst.cols, dst.type(), [
-        Math.min(180, hue + hueRange),
-        255,
-        255,
-        255,
-      ]);
-    }
+    // 定义红色的HSV范围
+    // 低值范围 (0-10)
+    let lowRedA = new cv.Mat(dst.rows, dst.cols, dst.type(), [0, 50, 50, 0]);
+    let highRedA = new cv.Mat(dst.rows, dst.cols, dst.type(), [10, 255, 255, 255]);
+    
+    // 高值范围 (170-180)
+    let lowRedB = new cv.Mat(dst.rows, dst.cols, dst.type(), [170, 50, 50, 0]);
+    let highRedB = new cv.Mat(dst.rows, dst.cols, dst.type(), [180, 255, 255, 255]);
 
     // 创建掩码
-    cv.inRange(dst, lowColor, highColor, mask);
+    let maskA = new cv.Mat();
+    let maskB = new cv.Mat();
+    cv.inRange(dst, lowRedA, highRedA, maskA);
+    cv.inRange(dst, lowRedB, highRedB, maskB);
+
+    // 合并掩码
+    cv.add(maskA, maskB, mask);
 
     // 将十六进制颜色值转换为RGBA
     const dstColor = hexToRgba(setColor);
@@ -139,9 +96,12 @@ function extractStampWithColorImpl(
     src.delete();
     dst.delete();
     mask.delete();
-    lowColor.delete();
-    highColor.delete();
-    extractColorHSV.delete();
+    maskA.delete();
+    maskB.delete();
+    lowRedA.delete();
+    highRedA.delete();
+    lowRedB.delete();
+    highRedB.delete();
     colorMat.delete();
     result.delete();
     return dataURL;
@@ -152,19 +112,18 @@ function extractStampWithColorImpl(
 }
 
 /**
- * 提取指定颜色的印章
+ * 提取红色的印章
  * @param file 图片文件
- * @param extractColor 提取的颜色
  * @param setColor 设置的颜色，比如提取红色设置红色那么能够进行对印章的填充
  * @param isCircle 是否是圆形，如果是圆形，那么会进行圆形的裁剪，否则进行椭圆的裁剪
  * @returns
  */
-function extractStampWithFile(file, extractColor, setColor, isCircle = true) {
+function extractStampWithFile(file, setColor, isCircle = true) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     let distImgList = [];
     img.onload = async () => {
-      let dstImg = extractStampWithColorImpl(img, extractColor, setColor);
+      let dstImg = extractStampWithColorImpl(img, setColor);
       let debugCircle = true;
       if (debugCircle) {
         // 将base64的图像数据转换为Image对象
@@ -180,8 +139,10 @@ function extractStampWithFile(file, extractColor, setColor, isCircle = true) {
         const resultRedImg = await base64ToImage(dstImg);
         // 提取圆圈并获取结果
         distImgList = extractCircles(resultRedImg, isCircle);
+        resolve(distImgList);
+      } else {
+        resolve([dstImg])
       }
-      resolve(distImgList);
     };
     img.onerror = (error) => {
       console.error("图片加载失败", error);
@@ -200,7 +161,7 @@ function detectCircles(dst) {
   // 创建一个新的Mat对象来存储检测到的圆形
   let circles = new cv.Mat();
   // 计算最小和最大半径，用于限制检测到的圆形大小
-  let minRadius = Math.min(dst.rows, dst.cols) * 0.05; // 最小半径为图像最小边的5%
+  let minRadius = Math.min(dst.rows, dst.cols) * 0.03; // 最小半径为图像最小边的5%
   let maxRadius = Math.min(dst.rows, dst.cols) * 0.5; // 最大半径为图像最小边的50%
   // 使用Hough变换检测圆形
   cv.HoughCircles(
@@ -208,8 +169,8 @@ function detectCircles(dst) {
     circles,
     cv.HOUGH_GRADIENT,
     1, // 两个圆心之间的最小距离
-    dst.rows / 4, // 检测圆心之间的最小距离
-    100, // 检测圆形的阈值
+    dst.rows / 8, // 检测圆心之间的最小距离
+    200, // 修改检测圆形的阈值为200
     50, // 检测圆形的阈值
     minRadius, // 检测圆形的最小半径
     maxRadius // 检测圆形的最大半径
@@ -226,21 +187,22 @@ function detectCircles(dst) {
       radius: circles.data32F[i * 3 + 2] // 半径
     });
   }
+  console.log("detectedCircles:", detectedCircles, maxRadius, minRadius, dst.rows, dst.cols);
   // 根据半径大小对检测到的圆形进行排序，确保最大的圆形排在前面
   detectedCircles.sort((a, b) => b.radius - a.radius);
 
   // 释放内存
   circles.delete();
   // 返回最大的3个圆形
-  return detectedCircles.slice(0, 3);
+  return detectedCircles.slice(0, 6);
 }
 
 
 /**
  * 提取印章圆形
- * @param {*} img 
- * @param {*} isCircle 
- * @returns 
+ * @param {*} img
+ * @param {*} isCircle
+ * @returns
  */
 function extractCircles(img, isCircle = true) {
   let src = cv.imread(img);
@@ -393,13 +355,13 @@ function extractRedStampWithColor(img, color = primaryColor) {
     cv.cvtColor(src, dst, cv.COLOR_RGBA2RGB);
     cv.cvtColor(dst, dst, cv.COLOR_RGB2HSV);
 
-    // 定义红色的HSV范围
+    // 定义红色和暗红色的HSV范围
     let lowRedA = new cv.Mat(dst.rows, dst.cols, dst.type(), [0, 100, 100, 0]);
     let highRedA = new cv.Mat(
       dst.rows,
       dst.cols,
       dst.type(),
-      [10, 255, 255, 255]
+      [50, 255, 255, 255]
     );
     let lowRedB = new cv.Mat(
       dst.rows,
@@ -419,6 +381,8 @@ function extractRedStampWithColor(img, color = primaryColor) {
     let maskB = new cv.Mat();
     cv.inRange(dst, lowRedA, highRedA, maskA);
     cv.inRange(dst, lowRedB, highRedB, maskB);
+
+
     cv.add(maskA, maskB, mask);
 
     // 将十六进制颜色值转换为RGB
@@ -480,3 +444,4 @@ window.initOpenCV = initOpenCV;
 window.extractRedStampWithFile = extractRedStampWithFile;
 window.extractRedStamp = extractRedStamp;
 window.extractStampWithFile = extractStampWithFile;
+
