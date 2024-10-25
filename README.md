@@ -2,6 +2,9 @@
 
 Extract stamps from images using OpenCV.js.
 
+##
+Preview Site: https://xxss0903.github.io/extractstamp/index.html
+
 ## Features
 
 - Extract red stamps from images
