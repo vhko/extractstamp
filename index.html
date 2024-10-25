@@ -19,12 +19,25 @@
             object-fit: contain;
             border: 1px solid #ddd;
         }
+        #loading {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 20px;
+            border-radius: 5px;
+            z-index: 1000;
+        }
     </style>
 </head>
 <body>
     <h1>选择图片</h1>
     <input type="file" id="imageInput" accept="image/*" onchange="selectImage()">
     <div id="imageContainer"></div>
+    <div id="loading">处理中，请稍候...</div>
     <script>
         let isReady = false;
         initOpenCV((ready) => {
@@ -36,9 +49,14 @@
             const file = document.getElementById('imageInput').files[0];
             console.log('file', file);
             if (file && isReady) {
+                showLoading();
                 extractStampWithFile(file, '#ff0000', '#ff0000', true).then(dstImgList => {
                     console.log('提取红色印章成功', dstImgList);
                     displayImages(dstImgList);
+                    hideLoading();
+                }).catch(error => {
+                    console.error('处理图片时出错:', error);
+                    hideLoading();
                 });
             } else if (!isReady) {
                 console.log('OpenCV.js 尚未加载完成，请稍后再试');
@@ -56,6 +74,14 @@
                 img.alt = `提取的印章 ${index + 1}`;
                 container.appendChild(img);
             });
+        }
+
+        function showLoading() {
+            document.getElementById('loading').style.display = 'block';
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
         }
     </script>
 </body>
