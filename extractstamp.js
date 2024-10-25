@@ -169,7 +169,7 @@ function detectCircles(dst) {
     circles,
     cv.HOUGH_GRADIENT,
     1, // 两个圆心之间的最小距离
-    dst.rows / 8, // 检测圆心之间的最小距离
+    dst.rows / 6, // 检测圆心之间的最小距离
     200, // 修改检测圆形的阈值为200
     50, // 检测圆形的阈值
     minRadius, // 检测圆形的最小半径
