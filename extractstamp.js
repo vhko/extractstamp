@@ -249,7 +249,7 @@ function detectCircles(dst) {
     1, // 两个圆心之间的最小距离
     dst.rows / 6, // 检测圆心之间的最小距离
     200, // 修改检测圆形的阈值为200
-    50, // 检测�����的阈值
+    50, // 检测的阈值
     minRadius, // 检测圆形的最小半径
     maxRadius // 检测圆形的最大半径
   );
@@ -335,107 +335,86 @@ function extractCircles(img, isCircle = true) {
  * @returns
  */
 function extractCirclesWithCvMat(img, cvMat, isCircle = true) {
-  const dst = new cv.Mat()
+  let dst = new cv.Mat();
   // 转换为灰度图
   cv.cvtColor(cvMat, dst, cv.COLOR_RGBA2GRAY);
   // 应用高斯模糊以减少噪声
   cv.GaussianBlur(dst, dst, new cv.Size(5, 5), 2, 2);
+  
   let croppedStamps = [];
   if (isCircle) {
-    let circles = [];
     // 检测圆形
-    circles = detectCircles(dst);
+    let circles = detectCircles(dst);
     console.log("circles:", circles);
     circles.forEach((circle) => {
       console.log("draw circle:", circle);
-      croppedStamps.push(cropAndDownloadCircle(img, circle));
+      croppedStamps.push(cropAndDownloadCircle(cvMat, circle));
     });
   } else {
-    let ellipses = [];
     // 检测椭圆
-    ellipses = detectEllipses(dst);
+    let ellipses = detectEllipses(dst);
     console.log("ellipses:", ellipses);
     ellipses.forEach((ellipse) => {
       console.log("draw ellipse:", ellipse);
-      croppedStamps.push(cropAndDownloadEllipse(img, ellipse));
+      croppedStamps.push(cropAndDownloadEllipse(cvMat, ellipse));
     });
   }
 
   // 释放内存
   dst.delete();
-  cvMat.delete();
-
+  
   return croppedStamps;
 }
 
-function cropAndDownloadCircle(img, circle) {
+function cropAndDownloadCircle(cvMat, circle) {
   // 定义缩放因子，使裁剪范围比圆形大一些
-  const scaleFactor = 1.2; // 增加20%的范围，您可以根据需要调整这个值
+  const scaleFactor = 1.2;
   // 计算新的半径和尺寸
   let newRadius = circle.radius * scaleFactor;
-  let size = newRadius * 2;
+  let size = Math.round(newRadius * 2);
 
-  // 创建一个新的canvas来裁剪圆形
-  let cropCanvas = document.createElement("canvas");
-  cropCanvas.width = size;
-  cropCanvas.height = size;
-  let ctx = cropCanvas.getContext("2d");
+  // 创建一个新的Mat来存储裁剪后的图像
+  let croppedMat = new cv.Mat();
+  let rect = new cv.Rect(
+    Math.round(circle.x - newRadius),
+    Math.round(circle.y - newRadius),
+    size,
+    size
+  );
 
-  if (ctx) {
-    // 清除整个canvas
-    ctx.clearRect(0, 0, size, size);
+  // 确保裁剪区域在图像范围内
+  rect.x = Math.max(0, Math.min(rect.x, cvMat.cols - rect.width));
+  rect.y = Math.max(0, Math.min(rect.y, cvMat.rows - rect.height));
+  rect.width = Math.min(rect.width, cvMat.cols - rect.x);
+  rect.height = Math.min(rect.height, cvMat.rows - rect.y);
 
-    // 裁剪圆形区域
-    ctx.beginPath();
-    ctx.arc(newRadius, newRadius, newRadius, 0, Math.PI * 2);
-    ctx.closePath();
-    ctx.clip();
+  // 裁剪图像
+  croppedMat = cvMat.roi(rect);
 
-    // 计算源图像的裁剪区域
-    let sx = circle.x - newRadius;
-    let sy = circle.y - newRadius;
-    let sWidth = size;
-    let sHeight = size;
+  // 创建圆形掩码
+  let mask = new cv.Mat.zeros(size, size, cv.CV_8UC1);
+  let center = new cv.Point(size / 2, size / 2);
+  cv.circle(mask, center, Math.round(newRadius), new cv.Scalar(255, 255, 255), -1);
 
-    // 确保不会裁剪到图像边界外
-    if (sx < 0) {
-      sWidth += sx;
-      sx = 0;
-    }
-    if (sy < 0) {
-      sHeight += sy;
-      sy = 0;
-    }
-    if (sx + sWidth > img.width) {
-      sWidth = img.width - sx;
-    }
-    if (sy + sHeight > img.height) {
-      sHeight = img.height - sy;
-    }
+  // 应用掩码
+  let result = new cv.Mat();
+  cv.bitwise_and(croppedMat, croppedMat, result, mask);
 
-    // 绘制裁剪后的图像
-    ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, size, size);
+  // 将结果转换为PNG数据URL
+  let imgData = new ImageData(new Uint8ClampedArray(result.data), result.cols, result.rows);
+  let canvas = document.createElement('canvas');
+  canvas.width = result.cols;
+  canvas.height = result.rows;
+  let ctx = canvas.getContext('2d');
+  ctx.putImageData(imgData, 0, 0);
+  let dataURL = canvas.toDataURL("image/png");
 
-    // 获取图像数据
-    let imageData = ctx.getImageData(0, 0, size, size);
-    let data = imageData.data;
+  // 释放内存
+  croppedMat.delete();
+  mask.delete();
+  result.delete();
 
-    // 将白色背景转为透明
-    for (let i = 0; i < data.length; i += 4) {
-      // 检查像素是否接近白色
-      if (data[i] > 240 && data[i + 1] > 240 && data[i + 2] > 240) {
-        // 将alpha通道设置为0（完全透明）
-        data[i + 3] = 0;
-      }
-    }
-
-    // 将处理后的图像数据放回canvas
-    ctx.putImageData(imageData, 0, 0);
-
-    // 将裁剪后的图像转换为数据URL（PNG格式以保持透明度）
-    let dataURL = cropCanvas.toDataURL("image/png");
-    return dataURL;
-  }
+  return dataURL;
 }
 
 /**
