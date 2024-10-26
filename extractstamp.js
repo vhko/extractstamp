@@ -212,14 +212,13 @@ function extractStampWithColorToImage(
  * 提取红色的印章
  * @param file 图片文件
  * @param setColor 设置的颜色，比如提取红色设置红色那么能够进行对印章的填充
- * @param isCircle 是否是圆形，如果是圆形，那么会进行圆形的裁剪，否则进行椭圆的裁剪
  * @returns
  */
-function extractStampWithFile(file, setColor, isCircle = true) {
+function extractStampWithFile(file, setColor) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
-      const result = extractStampWithImage(img, setColor, isCircle);
+      const result = extractStampWithImage(img, setColor);
       resolve(result);
     };
     img.onerror = (error) => {
@@ -249,7 +248,7 @@ function detectCircles(dst) {
     1, // 两个圆心之间的最小距离
     dst.rows / 6, // 检测圆心之间的最小距离
     200, // 修改检测圆形的阈值为200
-    50, // 检测的阈值
+    50, // 检测值
     minRadius, // 检测圆形的最小半径
     maxRadius // 检测圆形的最大半径
   );
@@ -279,10 +278,9 @@ function detectCircles(dst) {
 /**
  * 提取印章圆形
  * @param {*} img
- * @param {*} isCircle
  * @returns
  */
-function extractCircles(img, isCircle = true) {
+function extractCircles(img) {
   let src = cv.imread(img);
   let dst = new cv.Mat();
 
@@ -300,26 +298,14 @@ function extractCircles(img, isCircle = true) {
   // 绘制原始图像
   ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
   let croppedStamps = [];
-  if (isCircle) {
-    let circles = [];
-    // 检测圆形
-    circles = detectCircles(dst);
-    console.log("circles:", circles);
-    circles.forEach((circle) => {
-      console.log("draw circle:", circle);
-      croppedStamps.push(cropAndDownloadCircle(img, circle));
-    });
-  } else {
-    let ellipses = [];
-    // 检测椭圆
-    ellipses = detectEllipses(dst);
-    console.log("ellipses:", ellipses);
-    ellipses.forEach((ellipse) => {
-      console.log("draw ellipse:", ellipse);
-      croppedStamps.push(cropAndDownloadEllipse(img, ellipse));
-    });
-  }
-
+  let circles = [];
+  // 检测圆形
+  circles = detectCircles(dst);
+  console.log("circles:", circles);
+  circles.forEach((circle) => {
+    console.log("draw circle:", circle);
+    croppedStamps.push(cropAndDownloadCircle(img, circle));
+  });
   // 释放内存
   src.delete();
   dst.delete();
@@ -327,14 +313,38 @@ function extractCircles(img, isCircle = true) {
   return croppedStamps;
 }
 
+function detectEllipses(dst) {
+  let thresh = new cv.Mat();
+  cv.threshold(dst, thresh, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+  let contours = new cv.MatVector();
+  let hierarchy = new cv.Mat();
+  cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+  let detectedEllipses = [];
+  let minRadius = Math.min(dst.rows, dst.cols) * 0.05; // 最小半径
+  let maxRadius = Math.min(dst.rows, dst.cols) * 0.5; // 最大半径
+
+  for (let i = 0; i < contours.size(); ++i) {
+    let cnt = contours.get(i);
+    if (cnt.rows >= 5) { // 至少需要5个点来拟合椭圆
+      let ellipse = cv.fitEllipse(cnt);
+      let avgRadius = (ellipse.size.width + ellipse.size.height) / 4; // 计算平均半径
+      if (avgRadius >= minRadius && avgRadius <= maxRadius) {
+        detectedEllipses.push(ellipse);
+      }
+    }
+  }
+
+  thresh.delete(); contours.delete(); hierarchy.delete();
+  return detectedEllipses;
+}
+
 /**
  * 提取印章圆形
- * @param {*} img
  * @param {*} cvMat
- * @param {*} isCircle
  * @returns
  */
-function extractCirclesWithCvMat(img, cvMat, isCircle = true) {
+function extractCirclesWithCvMat(cvMat) {
   let dst = new cv.Mat();
   // 转换为灰度图
   cv.cvtColor(cvMat, dst, cv.COLOR_RGBA2GRAY);
@@ -342,24 +352,13 @@ function extractCirclesWithCvMat(img, cvMat, isCircle = true) {
   cv.GaussianBlur(dst, dst, new cv.Size(5, 5), 2, 2);
   
   let croppedStamps = [];
-  if (isCircle) {
-    // 检测圆形
-    let circles = detectCircles(dst);
-    console.log("circles:", circles);
-    circles.forEach((circle) => {
-      console.log("draw circle:", circle);
-      croppedStamps.push(cropAndDownloadCircle(cvMat, circle));
-    });
-  } else {
-    // 检测椭圆
-    let ellipses = detectEllipses(dst);
-    console.log("ellipses:", ellipses);
-    ellipses.forEach((ellipse) => {
-      console.log("draw ellipse:", ellipse);
-      croppedStamps.push(cropAndDownloadEllipse(cvMat, ellipse));
-    });
-  }
-
+  // 检测圆形
+  let circles = detectCircles(dst);
+  console.log("circles:", circles);
+  circles.forEach((circle) => {
+    console.log("draw circle:", circle);
+    croppedStamps.push(cropAndDownloadCircle(cvMat, circle));
+  });
   // 释放内存
   dst.delete();
   
@@ -407,6 +406,57 @@ function cropAndDownloadCircle(cvMat, circle) {
   canvas.height = result.rows;
   let ctx = canvas.getContext('2d');
   ctx.putImageData(imgData, 0, 0);
+  let dataURL = canvas.toDataURL("image/png");
+
+  // 释放内存
+  croppedMat.delete();
+  mask.delete();
+  result.delete();
+
+  return dataURL;
+}
+
+function cropAndDownloadEllipse(cvMat, ellipse) {
+  // 定义缩放因子，使裁剪范围比椭圆大一些
+  const scaleFactor = 1.2;
+  const width = ellipse.size.width > ellipse.size.height ? ellipse.size.width : ellipse.size.height;
+  const height = ellipse.size.width < ellipse.size.height ? ellipse.size.width : ellipse.size.height;
+  const scaledWidth = Math.round(width * scaleFactor);
+  const scaledHeight = Math.round(height * scaleFactor);
+
+  // 创建一个新的Mat来存储裁剪后的图像
+  let croppedMat = new cv.Mat();
+  let rect = new cv.Rect(
+    Math.round(ellipse.center.x - scaledWidth / 2),
+    Math.round(ellipse.center.y - scaledHeight / 2),
+    scaledWidth,
+    scaledHeight
+  );
+
+  // 确保裁剪区域在图像范围内
+  rect.x = Math.max(0, Math.min(rect.x, cvMat.cols - rect.width));
+  rect.y = Math.max(0, Math.min(rect.y, cvMat.rows - rect.height));
+  rect.width = Math.min(rect.width, cvMat.cols - rect.x);
+  rect.height = Math.min(rect.height, cvMat.rows - rect.y);
+
+  // 裁剪图像
+  croppedMat = cvMat.roi(rect);
+
+  // 创建椭圆形掩码
+  let mask = new cv.Mat.zeros(scaledHeight, scaledWidth, cv.CV_8UC1);
+  let center = new cv.Point(scaledWidth / 2, scaledHeight / 2);
+  let axes = new cv.Size(width / 2, height / 2);
+  cv.ellipse(mask, center, axes, ellipse.angle, 0, 360, new cv.Scalar(255, 255, 255), -1);
+
+  // 应用掩码
+  let result = new cv.Mat();
+  cv.bitwise_and(croppedMat, croppedMat, result, mask);
+
+  // 将结果转换为PNG数据URL
+  let canvas = document.createElement('canvas');
+  canvas.width = result.cols;
+  canvas.height = result.rows;
+  cv.imshow(canvas, result);
   let dataURL = canvas.toDataURL("image/png");
 
   // 释放内存
@@ -556,11 +606,11 @@ function hexToRgba(hex) {
   return [r, g, b, a];
 }
 
-function extractStampWithImage(img, setColor, isCircle = true) {
+function extractStampWithImage(img, setColor) {
   let distImgList = [];
   let cvMat = extractStampWithColorToOpencvMat(img, setColor);
   // 提取圆圈并获取结果
-  distImgList = extractCirclesWithCvMat(img, cvMat, isCircle);
+  distImgList = extractCirclesWithCvMat(cvMat);
   return distImgList;
 }
 

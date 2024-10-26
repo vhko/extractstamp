@@ -58,7 +58,7 @@
             if (file && isReady) {
                 showLoading();
                 displayOriginalImage(file);
-                extractStampWithFile(file, '#ff0000', true).then(dstImgList => {
+                extractStampWithFile(file, '#ff0000').then(dstImgList => {
                     console.log('提取红色印章成功', dstImgList);
                     displayImages(dstImgList);
                     hideLoading();
