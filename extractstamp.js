@@ -112,6 +112,103 @@ function extractStampWithColorImpl(
 }
 
 /**
+ * 提取直接成图片
+ * @param {*} img 图片
+ * @param {*} setColor 设置的颜色，比如提取红色设置红色那么能够进行对印章的填充
+ * @returns
+ */
+function extractStampWithColorToOpencvMat(
+    img,
+    setColor = "#ff0000"
+) {
+  if (cvReady) {
+    // 获取图片的宽高
+    const imgWidth = img.width;
+    const imgHeight = img.height;
+    console.log("图片宽度:", imgWidth, "图片高度:", imgHeight);
+    let src = cv.imread(img);
+    let dst = new cv.Mat();
+    let mask = new cv.Mat();
+
+    // 转换为HSV颜色空间
+    cv.cvtColor(src, dst, cv.COLOR_RGBA2RGB);
+    cv.cvtColor(dst, dst, cv.COLOR_RGB2HSV);
+
+    // 定义红色的HSV范围
+    // 低值范围 (0-10)
+    let lowRedA = new cv.Mat(dst.rows, dst.cols, dst.type(), [0, 50, 50, 0]);
+    let highRedA = new cv.Mat(dst.rows, dst.cols, dst.type(), [10, 255, 255, 255]);
+
+    // 高值范围 (170-180)
+    let lowRedB = new cv.Mat(dst.rows, dst.cols, dst.type(), [170, 50, 50, 0]);
+    let highRedB = new cv.Mat(dst.rows, dst.cols, dst.type(), [180, 255, 255, 255]);
+
+    // 创建掩码
+    let maskA = new cv.Mat();
+    let maskB = new cv.Mat();
+    cv.inRange(dst, lowRedA, highRedA, maskA);
+    cv.inRange(dst, lowRedB, highRedB, maskB);
+
+    // 合并掩码
+    cv.add(maskA, maskB, mask);
+
+    // 将十六进制颜色值转换为RGBA
+    const dstColor = hexToRgba(setColor);
+    console.log("dstColor:", dstColor);
+
+    // 创建带有 alpha 通道的目标图像
+    let result = new cv.Mat(src.rows, src.cols, cv.CV_8UC4, [0, 0, 0, 0]);
+
+    // 创建指定颜色的图像（带有 alpha 通道）
+    let colorMat = new cv.Mat(src.rows, src.cols, cv.CV_8UC4, [
+      ...dstColor.slice(0, 3),
+      255,
+    ]);
+
+    // 使用掩码将提取的区域设置为指定颜色，非提取区域保持透明
+    colorMat.copyTo(result, mask);
+
+    // 释放内存
+    src.delete();
+    dst.delete();
+    mask.delete();
+    maskA.delete();
+    maskB.delete();
+    lowRedA.delete();
+    highRedA.delete();
+    lowRedB.delete();
+    highRedB.delete();
+    colorMat.delete();
+    return result;
+  } else {
+    console.error("OpenCV.js 未加载");
+    return img;
+  }
+}
+
+// 提取直接成图片
+function extractStampWithColorToImage(
+    img,
+    setColor = "#ff0000"
+) {
+  if (cvReady) {
+    const result  = extractStampWithColorToOpencvMat(img, setColor)
+    // 创建隐藏的canvas用来保存提取后的图片
+    const hiddenCanvas = document.createElement("canvas");
+    hiddenCanvas.width = result.cols;
+    hiddenCanvas.height = result.rows;
+    cv.imshow(hiddenCanvas, result);
+    let dataURL = hiddenCanvas.toDataURL("image/png");
+
+    result.delete();
+    return dataURL;
+  } else {
+    console.error("OpenCV.js 未加载");
+    return img;
+  }
+}
+
+/**
  * 提取红色的印章
  * @param file 图片文件
  * @param setColor 设置的颜色，比如提取红色设置红色那么能够进行对印章的填充
@@ -121,28 +218,9 @@ function extractStampWithColorImpl(
 function extractStampWithFile(file, setColor, isCircle = true) {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    let distImgList = [];
-    img.onload = async () => {
-      let dstImg = extractStampWithColorImpl(img, setColor);
-      let debugCircle = true;
-      if (debugCircle) {
-        // 将base64的图像数据转换为Image对象
-        const base64ToImage = (base64) => {
-          return new Promise((resolve, reject) => {
-            const img = new Image();
-            img.onload = () => resolve(img);
-            img.onerror = (error) => reject(error);
-            img.src = base64;
-          });
-        };
-        // 将base64转换回Image对象
-        const resultRedImg = await base64ToImage(dstImg);
-        // 提取圆圈并获取结果
-        distImgList = extractCircles(resultRedImg, isCircle);
-        resolve(distImgList);
-      } else {
-        resolve([dstImg])
-      }
+    img.onload = () => {
+      const result = extractStampWithImage(img, setColor, isCircle);
+      resolve(result);
     };
     img.onerror = (error) => {
       console.error("图片加载失败", error);
@@ -171,7 +249,7 @@ function detectCircles(dst) {
     1, // 两个圆心之间的最小距离
     dst.rows / 6, // 检测圆心之间的最小距离
     200, // 修改检测圆形的阈值为200
-    50, // 检测圆形的阈值
+    50, // 检测�����的阈值
     minRadius, // 检测圆形的最小半径
     maxRadius // 检测圆形的最大半径
   );
@@ -249,6 +327,47 @@ function extractCircles(img, isCircle = true) {
   return croppedStamps;
 }
 
+/**
+ * 提取印章圆形
+ * @param {*} img
+ * @param {*} cvMat
+ * @param {*} isCircle
+ * @returns
+ */
+function extractCirclesWithCvMat(img, cvMat, isCircle = true) {
+  const dst = new cv.Mat()
+  // 转换为灰度图
+  cv.cvtColor(cvMat, dst, cv.COLOR_RGBA2GRAY);
+  // 应用高斯模糊以减少噪声
+  cv.GaussianBlur(dst, dst, new cv.Size(5, 5), 2, 2);
+  let croppedStamps = [];
+  if (isCircle) {
+    let circles = [];
+    // 检测圆形
+    circles = detectCircles(dst);
+    console.log("circles:", circles);
+    circles.forEach((circle) => {
+      console.log("draw circle:", circle);
+      croppedStamps.push(cropAndDownloadCircle(img, circle));
+    });
+  } else {
+    let ellipses = [];
+    // 检测椭圆
+    ellipses = detectEllipses(dst);
+    console.log("ellipses:", ellipses);
+    ellipses.forEach((ellipse) => {
+      console.log("draw ellipse:", ellipse);
+      croppedStamps.push(cropAndDownloadEllipse(img, ellipse));
+    });
+  }
+
+  // 释放内存
+  dst.delete();
+  cvMat.delete();
+
+  return croppedStamps;
+}
+
 function cropAndDownloadCircle(img, circle) {
   // 定义缩放因子，使裁剪范围比圆形大一些
   const scaleFactor = 1.2; // 增加20%的范围，您可以根据需要调整这个值
@@ -263,6 +382,9 @@ function cropAndDownloadCircle(img, circle) {
   let ctx = cropCanvas.getContext("2d");
 
   if (ctx) {
+    // 清除整个canvas
+    ctx.clearRect(0, 0, size, size);
+
     // 裁剪圆形区域
     ctx.beginPath();
     ctx.arc(newRadius, newRadius, newRadius, 0, Math.PI * 2);
@@ -294,7 +416,23 @@ function cropAndDownloadCircle(img, circle) {
     // 绘制裁剪后的图像
     ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, size, size);
 
-    // 将裁剪后的图像转换为数据URL
+    // 获取图像数据
+    let imageData = ctx.getImageData(0, 0, size, size);
+    let data = imageData.data;
+
+    // 将白色背景转为透明
+    for (let i = 0; i < data.length; i += 4) {
+      // 检查像素是否接近白色
+      if (data[i] > 240 && data[i + 1] > 240 && data[i + 2] > 240) {
+        // 将alpha通道设置为0（完全透明）
+        data[i + 3] = 0;
+      }
+    }
+
+    // 将处理后的图像数据放回canvas
+    ctx.putImageData(imageData, 0, 0);
+
+    // 将裁剪后的图像转换为数据URL（PNG格式以保持透明度）
     let dataURL = cropCanvas.toDataURL("image/png");
     return dataURL;
   }
@@ -439,9 +577,18 @@ function hexToRgba(hex) {
   return [r, g, b, a];
 }
 
+function extractStampWithImage(img, setColor, isCircle = true) {
+  let distImgList = [];
+  let cvMat = extractStampWithColorToOpencvMat(img, setColor);
+  // 提取圆圈并获取结果
+  distImgList = extractCirclesWithCvMat(img, cvMat, isCircle);
+  return distImgList;
+}
+
 // 在文件末尾，将函数添加到全局作用域
 window.initOpenCV = initOpenCV;
 window.extractRedStampWithFile = extractRedStampWithFile;
 window.extractRedStamp = extractRedStamp;
 window.extractStampWithFile = extractStampWithFile;
+window.extractStampWithImage = extractStampWithImage;
 
